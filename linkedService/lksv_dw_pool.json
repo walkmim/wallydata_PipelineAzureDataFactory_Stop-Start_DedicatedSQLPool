@@ -1,0 +1,12 @@
+{
+    "name": "lksv_dw_pool",
+    "type": "Microsoft.DataFactory/factories/linkedservices",
+    "properties": {
+        "description": "Linked service to connect against dedicated SQL Pool \"dw-pool\"",
+        "annotations": [],
+        "type": "AzureSqlDW",
+        "typeProperties": {
+            "connectionString": "Integrated Security=False;Encrypt=True;Connection Timeout=30;Data Source=dw-server-wallydata.database.windows.net;Initial Catalog=dw-pool"
+        }
+    }
+}

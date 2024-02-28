@@ -1,0 +1,6 @@
+selected resource name:		StopStart-SQLDW
+selected resource type:		pipeline
+factory name:			adf-wallydata
+factory location:		eastus
+subscription id:		29a29a75-564a-411c-b8f3-1a30d2cac2a1
+time of download (UTC):		Wed, 28 Feb 2024 17:41:15 GMT

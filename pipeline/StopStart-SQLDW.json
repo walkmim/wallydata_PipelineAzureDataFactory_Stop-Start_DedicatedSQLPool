@@ -1,0 +1,245 @@
+{
+    "name": "StopStart-SQLDW",
+    "properties": {
+        "activities": [
+            {
+                "name": "CheckState",
+                "type": "WebActivity",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "method": "GET",
+                    "url": {
+                        "value": "@concat('https://management.azure.com/subscriptions/'\n,pipeline().parameters.SubscriptionID,'/resourceGroups/'\n,pipeline().parameters.ResourceGroup,'/providers/Microsoft.Sql/servers/'\n,pipeline().parameters.ServerName,'/databases/'\n,pipeline().parameters.SQLPoolName\n,'?api-version=2020-08-01-preview')",
+                        "type": "Expression"
+                    },
+                    "authentication": {
+                        "type": "MSI",
+                        "resource": "https://management.azure.com/"
+                    }
+                }
+            },
+            {
+                "name": "If Condition Pool",
+                "type": "IfCondition",
+                "dependsOn": [
+                    {
+                        "activity": "CheckState",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "expression": {
+                        "value": "@equals(activity('CheckState').output.properties.status,'Online')",
+                        "type": "Expression"
+                    },
+                    "ifTrueActivities": [
+                        {
+                            "name": "Get_DW_Check_Idle",
+                            "type": "Script",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "linkedServiceName": {
+                                "referenceName": "lksv_dw_pool",
+                                "type": "LinkedServiceReference"
+                            },
+                            "typeProperties": {
+                                "scripts": [
+                                    {
+                                        "type": "Query",
+                                        "text": "IF (\n\tSELECT COUNT(*)\n\tFROM sys.dm_pdw_exec_requests\n\tWHERE status not in ('Completed','Failed','Cancelled')\n\t  AND session_id <> session_id()) > 0\nBEGIN\n\tSELECT 'false' as IdleSQLPool\nEND\nELSE\nBEGIN \n\tSELECT 'true' as IdleSQLPool\nEND"
+                                    }
+                                ],
+                                "scriptBlockExecutionTimeout": "02:00:00"
+                            }
+                        },
+                        {
+                            "name": "Set IdleSQLPool",
+                            "type": "SetVariable",
+                            "dependsOn": [
+                                {
+                                    "activity": "Get_DW_Check_Idle",
+                                    "dependencyConditions": [
+                                        "Succeeded"
+                                    ]
+                                }
+                            ],
+                            "policy": {
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "IdleSQLPool",
+                                "value": {
+                                    "value": "@bool(activity('Get_DW_Check_Idle').output.resultSets[0].rows[0]['IdleSQLPool'])\n\n",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "StopStart SQL Pool",
+                "type": "Switch",
+                "dependsOn": [
+                    {
+                        "activity": "If Condition Pool",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "on": {
+                        "value": "@concat(\n            activity('CheckState').output.properties.status,'-',pipeline().parameters.Action\n            ,if(equals(pipeline().parameters.Force,true),'-Force',\n                if(\n                    equals(variables('IdleSQLPool'),true),'-Idle',''\n                    )\n            )\n        )",
+                        "type": "Expression"
+                    },
+                    "cases": [
+                        {
+                            "value": "Paused-Resume",
+                            "activities": [
+                                {
+                                    "name": "SQLPool - Resume",
+                                    "type": "WebActivity",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "method": "POST",
+                                        "url": {
+                                            "value": "@concat('https://management.azure.com/subscriptions/'\n,pipeline().parameters.SubscriptionID,'/resourceGroups/'\n,pipeline().parameters.ResourceGroup,'/providers/Microsoft.Sql/servers/'\n,pipeline().parameters.ServerName,'/databases/'\n,pipeline().parameters.SQLPoolName\n,'/resume?api-version=2020-08-01-preview')",
+                                            "type": "Expression"
+                                        },
+                                        "body": "Resume",
+                                        "authentication": {
+                                            "type": "MSI",
+                                            "resource": "https://management.azure.com/"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "value": "Online-Pause-Idle",
+                            "activities": [
+                                {
+                                    "name": "SQLPool - Pause Idle",
+                                    "type": "WebActivity",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "method": "POST",
+                                        "url": {
+                                            "value": "@concat('https://management.azure.com/subscriptions/'\n,pipeline().parameters.SubscriptionID,'/resourceGroups/'\n,pipeline().parameters.ResourceGroup,'/providers/Microsoft.Sql/servers/'\n,pipeline().parameters.ServerName,'/databases/'\n,pipeline().parameters.SQLPoolName\n,'/pause?api-version=2020-08-01-preview')",
+                                            "type": "Expression"
+                                        },
+                                        "body": "Pause",
+                                        "authentication": {
+                                            "type": "MSI",
+                                            "resource": "https://management.azure.com/"
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "value": "Online-Pause-Force",
+                            "activities": [
+                                {
+                                    "name": "SQLPool - Pause Force",
+                                    "type": "WebActivity",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.12:00:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "method": "POST",
+                                        "url": {
+                                            "value": "@concat('https://management.azure.com/subscriptions/'\n,pipeline().parameters.SubscriptionID,'/resourceGroups/'\n,pipeline().parameters.ResourceGroup,'/providers/Microsoft.Sql/servers/'\n,pipeline().parameters.ServerName,'/databases/'\n,pipeline().parameters.SQLPoolName\n,'/pause?api-version=2020-08-01-preview')",
+                                            "type": "Expression"
+                                        },
+                                        "body": "Pause",
+                                        "authentication": {
+                                            "type": "MSI",
+                                            "resource": "https://management.azure.com/"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ],
+        "parameters": {
+            "SubscriptionID": {
+                "type": "string",
+                "defaultValue": "29a29a75-564a-411c-b8f3-1a30d2cac2a1"
+            },
+            "ResourceGroup": {
+                "type": "string",
+                "defaultValue": "rg-dataengineer"
+            },
+            "ServerName": {
+                "type": "string",
+                "defaultValue": "dw-server-wallydata"
+            },
+            "SQLPoolName": {
+                "type": "string",
+                "defaultValue": "dw-pool"
+            },
+            "Action": {
+                "type": "string",
+                "defaultValue": "Resume | Pause"
+            },
+            "Force": {
+                "type": "bool",
+                "defaultValue": false
+            }
+        },
+        "variables": {
+            "IdleSQLPool": {
+                "type": "Boolean"
+            }
+        },
+        "annotations": []
+    }
+}
